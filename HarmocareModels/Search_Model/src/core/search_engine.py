@@ -13,6 +13,8 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 class SearchEngine:
+    VECTOR_DIM = 384  # Define the vector dimension as a constant at class level
+
     def __init__(self):  # Fixed method name from _init_ to __init__
         self.db = Database()
         self.query_builder = SearchQueryBuilder()
@@ -27,55 +29,147 @@ class SearchEngine:
             'symptoms': 'symptom_id'
         }
 
-    async def search_entity(self, entity_type: str, query: str, limit: int = 10) -> List[Dict]:
+        # Add keyword lists for entity detection
+        self.hospital_keywords = {
+            'hospital', 'multi-specialty', 'emergency', 'icu', 'care center',
+            'medical center', '24x7', 'trauma', 'nursing home', 'healthcare',
+            'medical facility', 'clinic', 'medicare', 'treatment center',
+            'dialysis', 'isolation', 'mri', 'emergency room'
+        }
+        
+        self.doctor_keywords = {
+            'doctor', 'specialist', 'physician', 'surgeon', 'consultation',
+            'dr', 'dr.', 'pediatrician', 'cardiologist', 'neurologist',
+            'orthopedic', 'gynecologist', 'dermatologist', 'psychiatrist',
+            'checkup', 'vaccination'
+        }
+
+    def infer_entity_type(self, query: str) -> str:
+        """Detect whether query is looking for doctors or hospitals"""
+        query_lower = query.lower()
+        
+        # Count keyword matches for each type
+        hospital_matches = sum(1 for kw in self.hospital_keywords if kw in query_lower)
+        doctor_matches = sum(1 for kw in self.doctor_keywords if kw in query_lower)
+        
+        # Check for specific hospital indicators
+        hospital_indicators = [
+            'icu bed', 'emergency room', 'casualty', '24x7', 'multi-specialty',
+            'dialysis center', 'trauma center', 'medical center'
+        ]
+        if any(ind in query_lower for ind in hospital_indicators):
+            return 'hospitals'
+            
+        # If more hospital keywords found
+        if hospital_matches > doctor_matches:
+            return 'hospitals'
+        
+        # Default to doctors if unclear
+        return 'doctors'
+
+    def _build_search_query(self, entity_type: str, embedding_str: str, id_column: str) -> str:
+        """Build entity-specific search query"""
+        if entity_type == 'hospitals':
+            return f"""
+                SELECT 
+                    t.{id_column},
+                    t.name,
+                    t.hospital_type,
+                    t.location,
+                    t.rating,
+                    t.establishment_year,
+                    t.reg_no,
+                    GREATEST(
+                        1 - (t.embedding <-> '[{embedding_str}]'::vector({self.VECTOR_DIM})),
+                        ts_rank_cd(t.search_vector, plainto_tsquery(:query))
+                    ) AS similarity_score
+                FROM {entity_type} t
+                WHERE TRUE
+            """
+        elif entity_type == 'clinics':
+            return f"""
+                SELECT 
+                    t.{id_column},
+                    t.name,
+                    t.location,
+                    GREATEST(
+                        1 - (t.embedding <-> '[{embedding_str}]'::vector({self.VECTOR_DIM})),
+                        ts_rank_cd(t.search_vector, plainto_tsquery(:query))
+                    ) AS similarity_score
+                FROM {entity_type} t
+                WHERE TRUE
+            """
+        else:  # doctors
+            return f"""
+                SELECT 
+                    t.{id_column},
+                    t.name,
+                    t.specialization,
+                    t.city,
+                    t.rating,
+                    t.experience,
+                    GREATEST(
+                        1 - (t.embedding <-> '[{embedding_str}]'::vector({self.VECTOR_DIM})),
+                        ts_rank_cd(t.search_vector, plainto_tsquery(:query))
+                    ) AS similarity_score
+                FROM {entity_type} t
+                WHERE TRUE
+            """
+
+    async def search_entity(self, entity_type: str, query: str, filters: Optional[Dict] = None, limit: int = 10) -> List[Dict]:
         """Search within a specific entity type"""
         try:
-            # Generate query embedding
-            query_embedding = self.model.encode(query)
+            normalized_query = query.strip().lower()
+            query_embedding = self.model.encode(normalized_query)
+            
             if isinstance(query_embedding, np.ndarray):
                 query_embedding = query_embedding.tolist()
 
-            # Get correct ID column
             id_column = self.id_mapping.get(entity_type)
             if not id_column:
                 raise ValueError(f"Unknown entity type: {entity_type}")
 
-            # Execute search using async session
             async with self.db.get_session() as session:
-                # Format embedding as string
                 embedding_str = ','.join(map(str, query_embedding))
                 
-                # Combined vector and text search query using named parameters
-                search_query = text(f"""
-                    SELECT 
-                        t.{id_column},
-                        t.name,
-                        t.specialization, 
-                        t.city,
-                        t.rating,
-                        t.experience,
-                        GREATEST(
-                            1 - (t.embedding <-> '[{embedding_str}]'::vector(384)),
-                            ts_rank_cd(t.search_vector, plainto_tsquery(:query))
-                        ) AS similarity_score
-                    FROM {entity_type} t
-                    WHERE (
-                        t.embedding IS NOT NULL 
-                        OR t.search_vector @@ plainto_tsquery(:query)
-                    )
-                    ORDER BY similarity_score DESC
-                    LIMIT :limit
-                """)
+                # Get base query for entity type
+                base_query = self._build_search_query(entity_type, embedding_str, id_column)
 
-                # Pass parameters as a dictionary
-                params = {
-                    "query": query,
+                # Initialize filter parameters
+                filter_conditions = []
+                filter_params = {
+                    "query": normalized_query,
                     "limit": limit
                 }
 
-                result = await session.execute(search_query, params)
-                results = [dict(row) for row in result.mappings()]
-                return self._process_results(results, entity_type, id_column)
+                # Add location/city filter
+                if filters and filters.get('city'):
+                    location_column = 'location' if entity_type in ['hospitals', 'clinics'] else 'city'
+                    filter_conditions.append(f"""
+                        LOWER(TRIM(t.{location_column})) = LOWER(TRIM(:city))
+                    """)
+                    filter_params['city'] = filters['city'].strip()
+
+                # Add filters to base query
+                if filter_conditions:
+                    base_query += " AND " + " AND ".join(filter_conditions)
+
+                # Add similarity conditions
+                base_query += f"""
+                    AND (
+                        (t.embedding IS NOT NULL 
+                        AND (1 - (t.embedding <-> '[{embedding_str}]'::vector({self.VECTOR_DIM}))) > 0.001)
+                        OR t.search_vector @@ plainto_tsquery(:query)
+                    )
+                    ORDER BY similarity_score DESC 
+                    LIMIT :limit
+                """
+
+                # Execute query
+                search_query = text(base_query)
+                result = await session.execute(search_query, filter_params)
+                
+                return [dict(row) for row in result.mappings()]
 
         except Exception as e:
             logger.error(f"Search failed for {entity_type}: {str(e)}")
@@ -90,7 +184,7 @@ class SearchEngine:
     ) -> List[Dict[str, Any]]:
         """Execute vector search for doctors"""
         try:
-            query = text("""
+            query = text(f"""
                 SELECT
                     t.did,
                     t.name,
@@ -98,10 +192,10 @@ class SearchEngine:
                     t.city,
                     t.rating,
                     t.experience,
-                    1 - (t.embedding <-> :embedding::vector(384)) AS similarity_score
+                    1 - (t.embedding <-> :embedding::vector({self.VECTOR_DIM})) AS similarity_score
                 FROM doctors t
                 WHERE t.embedding IS NOT NULL
-                AND (1 - (t.embedding <-> :embedding::vector(384))) > 0.001
+                AND (1 - (t.embedding <-> :embedding::vector({self.VECTOR_DIM}))) > 0.001
                 ORDER BY similarity_score DESC
                 LIMIT :limit
             """)
@@ -124,22 +218,42 @@ class SearchEngine:
         self,
         conn,
         embedding: List[float],
+        filters: Optional[Dict] = None,
         limit: int = 10
     ) -> List[Dict[str, Any]]:
         """Execute vector search for hospitals"""
         try:
-            query = text("""
-                SELECT
-                    t.hid,
-                    t.name,
-                    t.hospital_type,
-                    t.location,
-                    t.rating,
-                    1 - (t.embedding <-> :embedding::vector(384)) AS similarity_score
-                FROM hospitals t
-                WHERE t.embedding IS NOT NULL
-                AND (1 - (t.embedding <-> :embedding::vector(384))) > 0.001
-                ORDER BY similarity_score DESC
+            query = text(f"""
+                WITH hospital_scores AS (
+                    SELECT
+                        h.hid,
+                        h.name,
+                        h.hospital_type,
+                        h.location,
+                        h.rating,
+                        h.facilities,
+                        h.specialties,
+                        ha.icu_beds_available,
+                        ha.emergency_ready,
+                        ha.oxygen_level,
+                        1 - (h.embedding <-> :embedding::vector({self.VECTOR_DIM})) AS similarity_score,
+                        earth_distance(
+                            ll_to_earth(h.latitude, h.longitude),
+                            ll_to_earth(:lat, :lon)
+                        ) as distance_km
+                    FROM hospitals h
+                    LEFT JOIN hospital_availability ha ON h.hid = ha.hospital_id
+                    WHERE h.embedding IS NOT NULL
+                    AND (1 - (h.embedding <-> :embedding::vector({self.VECTOR_DIM}))) > 0.001
+                )
+                SELECT *,
+                CASE 
+                    WHEN distance_km < 5000 THEN similarity_score * 1.2
+                    WHEN distance_km < 10000 THEN similarity_score * 1.1
+                    ELSE similarity_score
+                END as final_score
+                FROM hospital_scores
+                ORDER BY final_score DESC
                 LIMIT :limit
             """)
 
@@ -147,6 +261,8 @@ class SearchEngine:
                 query,
                 {
                     "embedding": embedding,
+                    "lat": filters.get('lat', 0) if filters else 0,
+                    "lon": filters.get('lon', 0) if filters else 0,
                     "limit": limit
                 }
             ).mappings().all()
@@ -165,17 +281,17 @@ class SearchEngine:
     ) -> List[Dict[str, Any]]:
         """Execute vector search for diseases"""
         try:
-            query = text("""
+            query = text(f"""
                 SELECT
                     t.disease_id,
                     t.name,
                     t.description,
                     t.severity,
                     t.treatments,
-                    1 - (t.embedding <-> :embedding::vector(384)) AS similarity_score
+                    1 - (t.embedding <-> :embedding::vector({self.VECTOR_DIM})) AS similarity_score
                 FROM diseases t
                 WHERE t.embedding IS NOT NULL
-                AND (1 - (t.embedding <-> :embedding::vector(384))) > 0.001
+                AND (1 - (t.embedding <-> :embedding::vector({self.VECTOR_DIM}))) > 0.001
                 ORDER BY similarity_score DESC
                 LIMIT :limit
             """)
@@ -213,14 +329,14 @@ class SearchEngine:
                 SELECT
                     t.{id_column},
                     t.name,
-                    t.specialization,
+                        cialization,
                     t.city,
                     t.rating,
                     t.experience,
-                    1 - (t.embedding <-> '[{embedding_str}]'::vector(384)) AS similarity_score
+                    1 - (t.embedding <-> '[{embedding_str}]'::vector({self.VECTOR_DIM})) AS similarity_score
                 FROM {entity_type} t
                 WHERE t.embedding IS NOT NULL
-                AND (1 - (t.embedding <-> '[{embedding_str}]'::vector(384))) > 0.001
+                AND (1 - (t.embedding <-> '[{embedding_str}]'::vector({self.VECTOR_DIM}))) > 0.001
                 ORDER BY similarity_score DESC
                 LIMIT :limit
             """)
@@ -380,8 +496,8 @@ class SearchEngine:
             params = {
                 'query': kwargs['query'],
                 'total_results': kwargs['total_results'],
-                'execution_time': kwargs['execution_time'],
-                'result_types': ','.join(kwargs['entity_types']),
+                'result_types': kwargs.get('result_types'),
+                'entity_types': kwargs.get('entity_types', []),
                 'processed_query': kwargs.get('processed_query', ''),
                 'filters': kwargs.get('filters', {}),
                 'created_at': datetime.now(timezone.utc)
@@ -391,6 +507,7 @@ class SearchEngine:
 
         except Exception as e:
             logger.error(f"Failed to log metrics: {str(e)}")
+            logger.error("Full traceback:", exc_info=True)
 
     async def _search_entity(
         self,
@@ -435,3 +552,6 @@ class SearchEngine:
         except Exception as e:
             logger.error(f"Entity search failed for {entity_type}: {str(e)}")
             return []
+
+
+

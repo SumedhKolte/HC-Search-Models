@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 import numpy as np
 from datetime import datetime, timezone
 import json
@@ -249,46 +249,62 @@ class PerformanceMetrics:
         except Exception as e:
             logger.error(f"Failed to save system status: {str(e)}")
 
-    def log_search(
+    async def log_search(
         self,
         query: str,
-        search_type: str,
-        results_count: int,
-        ip_address: str = None,
-        user_agent: str = None,
+        entity_types: Union[List[str], str],
+        total_results: int = 0,
+        filters: Dict = None,
         processed_query: str = None,
-        filters: Dict = None
+        execution_time: float = 0
     ) -> None:
-        """Log search details"""
+        """Log search details with sanitized inputs"""
         try:
+            # Normalize entity_types to always be a list
+            if isinstance(entity_types, str):
+                entity_types = [entity_types]
+
             insert_query = text("""
             INSERT INTO search_logs (
-                query, search_type, results_count, 
-                ip_address, user_agent, processed_query,
-                filters, created_at
+                query,
+                search_type,
+                results_count,
+                entity_types,
+                processed_query,
+                filters,
+                created_at,
+                execution_time
             ) VALUES (
-                :query, :search_type, :results_count,
-                :ip_address, :user_agent, :processed_query,
-                :filters, :created_at
+                :query,
+                :search_type,
+                :results_count,
+                :entity_types,
+                :processed_query,
+                :filters,
+                :created_at,
+                :execution_time
             )
             """)
             
             params = {
                 'query': query,
-                'search_type': search_type,
-                'results_count': results_count,
-                'ip_address': ip_address,
-                'user_agent': user_agent,
-                'processed_query': processed_query,
-                'filters': str(filters) if filters else None,
-                'created_at': datetime.now(timezone.utc)
+                'search_type': entity_types[0],  # Use first type as primary
+                'results_count': total_results,
+                'entity_types': entity_types,  # Pass list directly, let SQLAlchemy handle casting
+                'processed_query': processed_query or query,
+                'filters': json.dumps(filters) if filters else None,
+                'created_at': datetime.now(timezone.utc),
+                'execution_time': execution_time
             }
 
-            with self.db.engine.begin() as conn:
-                conn.execute(insert_query, params)
+            async with self.db.get_session() as session:
+                await session.execute(insert_query, params)
+                await session.commit()
+                logger.info(f"Search logged successfully: {query} with {total_results} results")
 
         except Exception as e:
             logger.error(f"Failed to log search: {str(e)}")
+            logger.exception("Full traceback:")
 
 def calculate_metrics(search_results: List[Dict], ground_truth: List[Dict]) -> Dict[str, float]:
     """Calculate search performance metrics"""
