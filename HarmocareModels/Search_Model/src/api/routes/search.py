@@ -14,7 +14,7 @@ from src.utils.metrics import PerformanceMetrics
 from src.data.database import Database, get_db
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(tags=["search"])  # Add tags for Swagger documentation
 
 # Initialize components
 search_engine = SearchEngine()
@@ -61,137 +61,49 @@ class SearchRequest(BaseModel):
         
         return v
 
-@router.post("/search/doctors")
-async def search_doctors(request: SearchRequest, background_tasks: BackgroundTasks):
-    """Search doctors endpoint"""
-    try:
-        if not request.query or request.query.isspace():
-            return {
-                "status": "error",
-                "message": "Query cannot be empty",
-                "results": []
-            }
-        
-        search_result = await search_engine.search_entity(
-            query=request.query,
-            entity_type='doctors',
-            filters=request.filters,
-            limit=request.limit
-        )
-        
-        return {
-            "status": search_result['status'],
-            "message": search_result.get('message'),
-            "results": search_result['data']
-        }
-        
-    except Exception as e:
-        logger.error(f"Doctor search failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
+# Add Query parameters model for GET requests
+class SearchParams:
+    def __init__(
+        self,
+        query: str = Query(..., min_length=1, max_length=500),
+        city: Optional[str] = Query(None, description="City filter"),
+        limit: int = Query(10, ge=1, le=100),
+        hospital_type: Optional[str] = Query(None),
+        specialization: Optional[str] = Query(None)
+    ):
+        self.query = query
+        self.filters = {}
+        if city:
+            self.filters['city'] = city
+        if hospital_type:
+            self.filters['hospital_type'] = hospital_type
+        if specialization:
+            self.filters['specialization'] = specialization
+        self.limit = limit
 
-@router.post("/search/hospitals")
-async def search_hospitals(request: SearchRequest, background_tasks: BackgroundTasks):
-    """Search hospitals endpoint"""
+async def perform_search(
+    query: str,
+    entity_types: List[str],
+    filters: Dict,
+    limit: int,
+    background_tasks: BackgroundTasks
+) -> Dict:
+    """Common search logic for both GET and POST requests"""
     try:
-        if not request.query or request.query.isspace():
-            return {
-                "status": "error",
-                "message": "Query cannot be empty",
-                "results": []
-            }
-        
-        entity_results = await search_engine.search_entity(
-            query=request.query,
-            entity_type='hospitals',
-            filters=request.filters,
-            limit=request.limit
-        )
-        
-        if not entity_results:
-            return {
-                "status": "success",
-                "message": "No matching hospitals found for your query",
-                "results": []
-            }
-            
-        return {
-            "status": "success",
-            "results": entity_results
-        }
-        
-    except Exception as e:
-        logger.error(f"Hospital search failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-@router.post("/search/clinics")
-async def search_clinics(request: SearchRequest, background_tasks: BackgroundTasks):
-    """Search clinics endpoint"""
-    try:
-        if not request.query or request.query.isspace():
-            return {
-                "status": "error", 
-                "message": "Query cannot be empty",
-                "results": []
-            }
-        
-        entity_results = await search_engine.search_entity(
-            query=request.query,
-            entity_type='clinics',
-            filters=request.filters,
-            limit=request.limit
-        )
-        
-        if not entity_results:
-            return {
-                "status": "success",
-                "message": "No matching clinics found for your query",
-                "results": []
-            }
-            
-        return {
-            "status": "success",
-            "results": entity_results
-        }
-        
-    except Exception as e:
-        logger.error(f"Clinic search failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-@router.post("/search")
-async def unified_search(request: SearchRequest, background_tasks: BackgroundTasks):
-    """Unified search across multiple entity types"""
-    try:
-        # Auto-detect entity type if not specified
-        if not request.entity_types:
-            inferred_type = search_engine.infer_entity_type(request.query)
-            request.entity_types = [inferred_type]
-            
-        logger.info(f"Searching for entity types: {request.entity_types}")
-        
         results = {}
         total_results = 0
         
-        for entity_type in request.entity_types:
+        for entity_type in entity_types:
             try:
-                # Normalize location filter
-                filters = dict(request.filters)
-                if filters.get('city'):
-                    filters['location' if entity_type in ['hospitals', 'clinics'] else 'city'] = filters.pop('city')
+                current_filters = dict(filters)
+                if current_filters.get('city'):
+                    current_filters['location' if entity_type in ['hospitals', 'clinics'] else 'city'] = current_filters.pop('city')
 
                 entity_results = await search_engine.search_entity(
-                    query=request.query,
+                    query=query,
                     entity_type=entity_type,
-                    filters=filters,
-                    limit=request.limit
+                    filters=current_filters,
+                    limit=limit
                 )
                 
                 results[entity_type] = {
@@ -214,15 +126,95 @@ async def unified_search(request: SearchRequest, background_tasks: BackgroundTas
             "status": "success",
             "results": results,
             "metadata": {
-                "inferred_types": request.entity_types,
                 "total_results": total_results,
-                "query": request.query
+                "query": query,
+                "entity_types": entity_types
             }
         }
-
     except Exception as e:
         logger.error(f"Search failed: {str(e)}")
-        raise HTTPException(
-            status_code=500, 
-            detail=str(e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 1. Unified Search Routes
+@router.get("/search/unified", response_model=Dict)
+@router.post("/search/unified", response_model=Dict)
+async def unified_search(
+    request: Optional[SearchRequest] = None,
+    query: str = Query(None, min_length=1, max_length=500),
+    city: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100),
+    background_tasks: BackgroundTasks = None
+):
+    """Unified search across all entity types"""
+    if request:  # POST request
+        search_params = request
+    else:  # GET request
+        search_params = SearchParams(query=query, city=city, limit=limit)
+        
+    return await perform_search(
+        query=search_params.query,
+        entity_types=['hospitals', 'doctors', 'clinics'],
+        filters=search_params.filters,
+        limit=search_params.limit,
+        background_tasks=background_tasks
+    )
+
+# 2. Doctors Search Routes
+@router.get("/search/doctors", response_model=Dict)
+@router.post("/search/doctors", response_model=Dict)
+async def search_doctors(
+    request: Optional[SearchRequest] = None,
+    query: str = Query(None, min_length=1, max_length=500),
+    city: Optional[str] = Query(None),
+    specialization: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100),
+    background_tasks: BackgroundTasks = None
+):
+    """Search doctors only"""
+    if request:  # POST request
+        search_params = request
+    else:  # GET request
+        search_params = SearchParams(
+            query=query,
+            city=city,
+            specialization=specialization,
+            limit=limit
         )
+    
+    return await perform_search(
+        query=search_params.query,
+        entity_types=['doctors'],
+        filters=search_params.filters,
+        limit=search_params.limit,
+        background_tasks=background_tasks
+    )
+
+# 3. Medical Facilities Search Routes
+@router.get("/search/medical-facilities", response_model=Dict)
+@router.post("/search/medical-facilities", response_model=Dict)
+async def search_facilities(
+    request: Optional[SearchRequest] = None,
+    query: str = Query(None, min_length=1, max_length=500),
+    city: Optional[str] = Query(None),
+    hospital_type: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100),
+    background_tasks: BackgroundTasks = None
+):
+    """Search hospitals and clinics"""
+    if request:  # POST request
+        search_params = request
+    else:  # GET request
+        search_params = SearchParams(
+            query=query,
+            city=city,
+            hospital_type=hospital_type,
+            limit=limit
+        )
+    
+    return await perform_search(
+        query=search_params.query,
+        entity_types=['hospitals', 'clinics'],
+        filters=search_params.filters,
+        limit=search_params.limit,
+        background_tasks=background_tasks
+    )

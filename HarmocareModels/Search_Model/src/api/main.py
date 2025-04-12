@@ -31,12 +31,12 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="Medical Search API",
-    description="API for searching medical entities",
+    description="Healthcare Search Service",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# Configure CORS
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
