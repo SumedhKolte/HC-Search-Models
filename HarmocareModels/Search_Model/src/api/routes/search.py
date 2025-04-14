@@ -24,7 +24,7 @@ metrics = PerformanceMetrics()
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=500)
     entity_types: List[str] = Field(
-        default=['hospitals', 'doctors', 'clinics'],
+        default=['hospitals', 'doctors', 'clinics', 'symptoms', 'diseases'],
         description="Types of entities to search"
     )
     filters: Optional[Dict] = Field(
@@ -36,7 +36,7 @@ class SearchRequest(BaseModel):
     @field_validator('entity_types')
     @classmethod
     def validate_entity_types(cls, v: List[str]) -> List[str]:
-        valid_types = {'doctors', 'hospitals', 'clinics'}
+        valid_types = {'doctors', 'hospitals', 'clinics', 'symptoms', 'diseases'}
         if not all(t in valid_types for t in v):
             raise ValueError(f"Invalid entity type. Must be one of: {valid_types}")
         return v
@@ -96,7 +96,11 @@ async def perform_search(
         for entity_type in entity_types:
             try:
                 current_filters = dict(filters)
-                if current_filters.get('city'):
+                
+                # Only apply location filters to physical entities
+                if entity_type in ['symptoms', 'diseases']:
+                    current_filters = {}  # No filters for symptoms/diseases
+                elif current_filters.get('city'):
                     current_filters['location' if entity_type in ['hospitals', 'clinics'] else 'city'] = current_filters.pop('city')
 
                 entity_results = await search_engine.search_entity(
@@ -153,7 +157,7 @@ async def unified_search(
         
     return await perform_search(
         query=search_params.query,
-        entity_types=['hospitals', 'doctors', 'clinics'],
+        entity_types=['hospitals', 'doctors', 'clinics', 'symptoms', 'diseases'],
         filters=search_params.filters,
         limit=search_params.limit,
         background_tasks=background_tasks
@@ -170,7 +174,7 @@ async def search_doctors(
     limit: int = Query(10, ge=1, le=100),
     background_tasks: BackgroundTasks = None
 ):
-    """Search doctors only"""
+    """Search doctors and related medical conditions"""
     if request:  # POST request
         search_params = request
     else:  # GET request
@@ -183,7 +187,7 @@ async def search_doctors(
     
     return await perform_search(
         query=search_params.query,
-        entity_types=['doctors'],
+        entity_types=['doctors', 'symptoms', 'diseases'],
         filters=search_params.filters,
         limit=search_params.limit,
         background_tasks=background_tasks
@@ -200,7 +204,7 @@ async def search_facilities(
     limit: int = Query(10, ge=1, le=100),
     background_tasks: BackgroundTasks = None
 ):
-    """Search hospitals and clinics"""
+    """Search hospitals, clinics and related medical conditions"""
     if request:  # POST request
         search_params = request
     else:  # GET request
@@ -213,7 +217,7 @@ async def search_facilities(
     
     return await perform_search(
         query=search_params.query,
-        entity_types=['hospitals', 'clinics'],
+        entity_types=['hospitals', 'clinics', 'symptoms', 'diseases'],
         filters=search_params.filters,
         limit=search_params.limit,
         background_tasks=background_tasks

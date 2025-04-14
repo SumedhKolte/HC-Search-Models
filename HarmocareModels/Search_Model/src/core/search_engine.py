@@ -99,6 +99,35 @@ class SearchEngine:
                 FROM {entity_type} t
                 WHERE TRUE
             """
+        elif entity_type == 'diseases':
+            return f"""
+                SELECT 
+                    t.{id_column},
+                    t.name,
+                    t.description,
+                    t.severity,
+                    t.treatments,
+                    GREATEST(
+                        1 - (t.embedding <-> '[{embedding_str}]'::vector({self.VECTOR_DIM})),
+                        ts_rank_cd(t.search_vector, plainto_tsquery(:query))
+                    ) AS similarity_score
+                FROM {entity_type} t
+                WHERE TRUE
+            """
+        elif entity_type == 'symptoms':
+            return f"""
+                SELECT 
+                    t.{id_column},
+                    t.name,
+                    t.description,
+                    t.tags,
+                    GREATEST(
+                        1 - (t.embedding <-> '[{embedding_str}]'::vector({self.VECTOR_DIM})),
+                        ts_rank_cd(t.search_vector, plainto_tsquery(:query))
+                    ) AS similarity_score
+                FROM {entity_type} t
+                WHERE TRUE
+            """
         else:  # doctors
             return f"""
                 SELECT 
