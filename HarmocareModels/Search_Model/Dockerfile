@@ -26,9 +26,12 @@ RUN pip install -r req/base.txt
 RUN pip install -r req/prod.txt
 RUN pip install -r req/dev.txt
 RUN pip install -r requirements.txt
-
-# Install additional dependencies if needed
 RUN pip install faiss-cpu
+
+# 🔽 Pre-download SentenceTransformer model
+RUN python3 -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2').save('/app/local_model')"
 
 # Expose the port uvicorn will run on
 EXPOSE 8000
