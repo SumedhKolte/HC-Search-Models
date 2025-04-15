@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class SearchQueryBuilder:
     def __init__(self):
         self.db = Database()
-        self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        self.model = SentenceTransformer('/app/local_model')
         self.metrics = PerformanceMetrics()
 
     def build_vector_query(
