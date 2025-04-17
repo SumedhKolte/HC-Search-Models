@@ -29,8 +29,8 @@ jobs:
     - name: Build and push container image to registry
       uses: docker/build-push-action@v3
       with:
-        context: ./harmocaremodels/search_model
-        file: ./harmocaremodels/search_model/Dockerfile
+        context: ./HarmocareModels/Search_Model
+        file: ./HarmocareModels/Search_Model/Dockerfile
         push: true
         tags: searchmodel.azurecr.io/${{ secrets.AzureAppService_ContainerUsername_09f1704236c346cca6caa3cbcecf213c }}/mlapi:${{ github.sha }}
 
