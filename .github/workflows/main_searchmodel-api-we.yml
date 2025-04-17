@@ -27,11 +27,13 @@ jobs:
         password: ${{ secrets.AzureAppService_ContainerPassword_e6d46cb832a842f9a973affc08fe15d7 }}
 
     - name: Build and push container image to registry
-      uses: docker/build-push-action@v3
-      with:
-        push: true
-        tags: searchmodel.azurecr.io/${{ secrets.AzureAppService_ContainerUsername_09f1704236c346cca6caa3cbcecf213c }}/mlapi:${{ github.sha }}
-        file: ./Dockerfile
+  uses: docker/build-push-action@v3
+  with:
+    context: ./harmocaremodels/search_model
+    file: ./harmocaremodels/search_model/Dockerfile
+    push: true
+    tags: searchmodel.azurecr.io/${{ secrets.AzureAppService_ContainerUsername_09f1704236c346cca6caa3cbcecf213c }}/mlapi:${{ github.sha }}
+
 
   deploy:
     runs-on: ubuntu-latest
