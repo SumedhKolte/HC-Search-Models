@@ -35,7 +35,6 @@ app = FastAPI(
 # Initialize components
 try:
     db = Database()
-    search_engine = SearchEngine()
     metrics = PerformanceMetrics()
     validator = InputValidator()
     logger.info("All components initialized successfully")
@@ -57,13 +56,16 @@ app.state.background_tasks = set()
 
 @app.on_event("startup")
 async def startup_event():
-    """Run startup tasks"""
-    logger.info("Starting up Medical Search API")
-    # Create task and store it
-    task = asyncio.create_task(run_embedding_updates())
-    app.state.background_tasks.add(task)
-    # Remove task when done
-    task.add_done_callback(app.state.background_tasks.discard)
+    """Initialize application components"""
+    try:
+        # Initialize search engine
+        app.state.search_engine = SearchEngine()
+        await app.state.search_engine.initialize()
+        
+        logger.info("Search engine initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize application: {str(e)}")
+        raise
 
 @app.on_event("shutdown") 
 async def shutdown_event():
@@ -102,7 +104,7 @@ async def search(request: SearchRequest):
             raise HTTPException(status_code=400, detail=error)
             
         # Execute search
-        results = search_engine.search(
+        results = app.state.search_engine.search(
             query=request.query,
             search_type=request.search_type,  # Updated parameter name
             filters=request.filters,
@@ -130,7 +132,7 @@ async def search(request: SearchRequest):
 async def get_suggestions(query: str, entity_type: str):
     """Get search suggestions"""
     try:
-        suggestions = search_engine.get_suggestions(
+        suggestions = app.state.search_engine.get_suggestions(
             query=query,
             entity_type=entity_type
         )

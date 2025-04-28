@@ -63,7 +63,7 @@ class Database:
             logger.error(f"❌ Database connection failed: {str(e)}")
             raise
 
-    async def execute_query(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
+    async def execute_query(self, query: str, params: Optional[Union[Dict, List]] = None) -> List[Dict]:
         """Execute async database query"""
         try:
             async with self.SessionLocal() as session:
@@ -71,8 +71,16 @@ class Database:
                     if isinstance(query, str):
                         query = text(query)
                     
+                    # Convert list parameters to dictionary if needed
+                    if isinstance(params, list):
+                        # Convert list to dictionary with numbered keys
+                        params = {f'param_{i}': val for i, val in enumerate(params)}
+                    elif params is None:
+                        params = {}
+                    
                     # Ensure params is a dictionary
-                    params = params or {}
+                    if not isinstance(params, dict):
+                        raise ValueError("Query parameters must be a dictionary")
                     
                     result = await session.execute(query, params)
                     return [dict(row) for row in result.mappings()]

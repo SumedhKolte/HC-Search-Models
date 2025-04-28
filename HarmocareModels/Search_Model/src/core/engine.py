@@ -42,6 +42,18 @@ class SearchEngine:
         self.query_expander = QueryExpander()
         self.validator = InputValidator()
 
+    async def initialize(self):
+        """Initialize search engine components asynchronously"""
+        try:
+            # Load medical entities
+            self.specialties = await self._load_medical_specialties()
+            self.symptoms = await self._load_medical_symptoms()
+            self.conditions = await self._load_medical_conditions()
+            logger.info("Medical entities loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize search engine: {str(e)}")
+            raise
+
     def search(
         self,
         query: str,
@@ -199,35 +211,60 @@ class SearchEngine:
             logger.error(f"Hospital search failed: {str(e)}")
             return []
 
-    async def search_entity(self, entity_type: str, query_embedding: np.ndarray, 
-                          filters: Optional[Dict] = None, limit: int = 10) -> List[Dict]:
+    async def search_entity(self, entity_type: str, query: str, filters: Optional[Dict] = None, limit: int = 10) -> List[Dict]:
         """Execute search for specific entity type"""
         try:
-            async for session in self.db.get_async_session():
-                # Convert numpy array to list for JSON serialization
-                embedding_list = query_embedding.tolist()
-                
-                # Build query
-                query = text(f"""
-                    SELECT *,
-                    1 - (embedding <-> :embedding::vector(384)) as similarity
-                    FROM {entity_type}
-                    WHERE embedding IS NOT NULL
-                    ORDER BY similarity DESC
-                    LIMIT :limit
-                """)
-                
-                # Execute query
-                result = await session.execute(
-                    query,
-                    {"embedding": embedding_list, "limit": limit}
-                )
-                
+            # Process query text
+            processed_query = self.text_processor.process(query)
+            
+            # Generate query embedding
+            query_embedding = self.model.encode(processed_query)
+
+            # Build search query based on entity type
+            base_query = f"""
+            SELECT *,
+            1 - (embedding <-> :embedding::vector(384)) as similarity_score
+            FROM {entity_type}
+            WHERE embedding IS NOT NULL
+            AND (1 - (embedding <-> :embedding::vector(384))) > 0.1
+            """
+            
+            params = {"embedding": query_embedding.tolist()}
+
+            # Add filters if provided
+            if filters:
+                if entity_type == 'doctors':
+                    if filters.get('city'):
+                        base_query += " AND LOWER(city) = LOWER(:city)"
+                        params['city'] = filters['city']
+                    if filters.get('specialization'):
+                        base_query += " AND (LOWER(specialization) = LOWER(:spec) OR LOWER(specialization) LIKE LOWER(:spec_pattern))"
+                        params['spec'] = filters['specialization']
+                        params['spec_pattern'] = f"%{filters['specialization']}%"
+                elif entity_type in ['hospitals', 'clinics']:
+                    if filters.get('city'):
+                        base_query += " AND LOWER(location) = LOWER(:location)"
+                        params['location'] = filters['city']
+
+            # Add ordering and limit
+            base_query += """
+            ORDER BY similarity_score DESC, 
+                     CASE WHEN LOWER(name) LIKE LOWER(:name_pattern) THEN 1 ELSE 0 END DESC
+            LIMIT :limit
+            """
+            params.update({
+                'name_pattern': f"%{query}%",
+                'limit': limit
+            })
+
+            # Execute query
+            async with self.db.get_session() as session:
+                result = await session.execute(text(base_query), params)
                 return [dict(row) for row in result.mappings()]
 
         except Exception as e:
             logger.error(f"Search failed for {entity_type}: {str(e)}")
-            logger.error(f"Full traceback:", exc_info=True)
+            logger.error("Full traceback:", exc_info=True)
             return []
 
     def _fetch_results(self,

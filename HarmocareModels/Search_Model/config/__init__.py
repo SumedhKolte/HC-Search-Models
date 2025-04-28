@@ -90,7 +90,7 @@ SCHEMA = {
         ],
         'filterable_fields': [
             'gender', 'city', 'specialization', 'rating',
-            'consultant_fees_in_rupees'
+            'consultantfee'
         ]
     },
     'hospitals': {

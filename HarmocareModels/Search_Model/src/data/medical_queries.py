@@ -20,7 +20,7 @@ class MedicalQueries:
             specialization,
             COUNT(*) as doctor_count,
             AVG(NULLIF(rating::numeric, 0)) as avg_rating,
-            AVG(NULLIF(consultant_fees_in_rupees::numeric, 0)) as avg_fees
+            AVG(NULLIF(consultantfee::numeric, 0)) as avg_consultantfee
         FROM doctors
         WHERE specialization IS NOT NULL
         GROUP BY specialization

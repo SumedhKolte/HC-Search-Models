@@ -86,7 +86,7 @@ ENTITIES = {
             'specialization': str,
             'rating': float,
             'experience': int,
-            'consultant_fees_in_rupees': int
+            'consultantfee': int
         }
     },
     'hospitals': {

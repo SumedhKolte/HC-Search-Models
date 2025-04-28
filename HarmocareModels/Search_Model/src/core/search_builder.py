@@ -128,7 +128,7 @@ class SearchQueryBuilder:
             base_query = """
             SELECT 
                 did, name, specialization, city, experience, rating,
-                consultant_fees_in_rupees, doctor_hours,
+                consultantfee, doctor_hours,
                 GREATEST(
                     1 - (embedding <-> %s::vector(384)),
                     ts_rank_cd(search_vector, plainto_tsquery(%s)),
