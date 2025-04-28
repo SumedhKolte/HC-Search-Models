@@ -25,14 +25,7 @@ RUN pip install -r req/prod.txt
 RUN pip install -r req/dev.txt
 RUN pip install -r requirements.txt
 RUN pip install faiss-cpu
-
-# ✅ Make sure uvicorn is installed
-RUN pip install uvicorn[standard]
-
-# Create a virtual environment (optional, for local dev)
-RUN python -m venv venv
-# Activate virtual environment (locally on the container)
-RUN . ./venv/bin/activate && pip install -r requirements.txt
+RUN pip install "uvicorn[standard]"
 
 # Preload the SentenceTransformer model
 RUN python3 -c "\
@@ -42,5 +35,5 @@ SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2').save('/app/local_m
 # Expose the port
 EXPOSE 8000
 
-# ✅ Run with python -m uvicorn
-CMD ["python", "-m", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run with uvicorn directly (with --reload for dev)
+CMD ["uvicorn", "src.api.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
