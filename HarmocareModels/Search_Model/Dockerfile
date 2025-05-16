@@ -18,8 +18,10 @@ RUN apt-get update && apt-get install -y \
 # Copy project files
 COPY . .
 
+# Upgrade pip explicitly using python -m
+RUN python -m pip install --upgrade pip
+
 # Install Python dependencies
-RUN pip install --upgrade pip
 RUN pip install -r req/base.txt
 RUN pip install -r req/prod.txt
 RUN pip install -r req/dev.txt
