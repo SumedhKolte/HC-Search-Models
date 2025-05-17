@@ -42,6 +42,54 @@ class SearchEngine:
         self.query_expander = QueryExpander()
         self.validator = InputValidator()
 
+    async def _load_medical_specialties(self) -> List[Dict]:
+        """Load medical specialties from database"""
+        try:
+            query = """
+            SELECT DISTINCT specialization 
+            FROM doctors 
+            WHERE specialization IS NOT NULL
+            ORDER BY specialization
+            """
+            async with self.db.get_session() as session:
+                result = await session.execute(text(query))
+                return [dict(row) for row in result]
+        except Exception as e:
+            logger.error(f"Failed to load specialties: {str(e)}")
+            return []
+
+    async def _load_medical_symptoms(self) -> List[Dict]:
+        """Load medical symptoms from database"""
+        try:
+            query = """
+            SELECT symptom_id, name, description
+            FROM symptoms
+            WHERE name IS NOT NULL
+            ORDER BY name
+            """
+            async with self.db.get_session() as session:
+                result = await session.execute(text(query))
+                return [dict(row) for row in result]
+        except Exception as e:
+            logger.error(f"Failed to load symptoms: {str(e)}")
+            return []
+
+    async def _load_medical_conditions(self) -> List[Dict]:
+        """Load medical conditions/diseases from database"""
+        try:
+            query = """
+            SELECT disease_id, name, description
+            FROM diseases
+            WHERE name IS NOT NULL
+            ORDER BY name
+            """
+            async with self.db.get_session() as session:
+                result = await session.execute(text(query))
+                return [dict(row) for row in result]
+        except Exception as e:
+            logger.error(f"Failed to load conditions: {str(e)}")
+            return []
+
     async def initialize(self):
         """Initialize search engine components asynchronously"""
         try:

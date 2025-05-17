@@ -6,7 +6,7 @@ from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 from psycopg2.extras import execute_values
 
-from src.data.database import db
+from src.data.database import Database  # Changed from 'db' to Database
 from src.utils.constants import EMBEDDING_MODELS, ENTITY_CONFIGS
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,8 @@ model = SentenceTransformer(EMBEDDING_MODELS['bge_small'])
 
 class EmbeddingUpdater:
     def __init__(self):
-        self.db = db
-
+        self.db = Database()  # Create database instance
+        
     def generate_embedding(self, text):
         return model.encode(text).tolist()
 
@@ -27,8 +27,8 @@ class EmbeddingUpdater:
         WHERE {config['embedding_column']} IS NULL
         """)
         try:
-            with self.db.engine.begin() as conn:
-                result = conn.execute(query)
+            async with self.db.get_session() as session:  # Use async session
+                result = await session.execute(query)
                 return [dict(row) for row in result]
         except Exception as e:
             logger.error(f"❌ Failed to fetch new records for {entity}: {e}")
