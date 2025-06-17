@@ -582,5 +582,54 @@ class SearchEngine:
             logger.error(f"Entity search failed for {entity_type}: {str(e)}")
             return []
 
+    async def get_all_entities(self, entity_type: str, filters: Optional[Dict] = None, limit: int = 10) -> List[Dict]:
+        """Get all entities of a specific type with optional filters"""
+        try:
+            # Get the appropriate ID column for the entity type
+            id_column = self.id_mapping.get(entity_type, 'id')
+
+            # Build base query
+            base_query = f"""
+                SELECT *
+                FROM {entity_type}
+                WHERE TRUE
+            """
+            params = {}
+
+            # Add filters if provided
+            if filters:
+                if entity_type == 'doctors':
+                    if filters.get('city'):
+                        base_query += " AND LOWER(city) = LOWER(:city)"
+                        params['city'] = filters['city']
+                    if filters.get('specialization'):
+                        base_query += " AND LOWER(specialization) = LOWER(:spec)"
+                        params['spec'] = filters['specialization']
+                elif entity_type in ['hospitals', 'clinics']:
+                    if filters.get('location'):
+                        base_query += " AND LOWER(location) = LOWER(:location)"
+                        params['location'] = filters['location']
+                    if filters.get('hospital_type'):
+                        base_query += " AND LOWER(hospital_type) = LOWER(:type)"
+                        params['type'] = filters['hospital_type']
+
+            # Add ordering and limit
+            if entity_type == 'doctors':
+                base_query += " ORDER BY rating DESC NULLS LAST"
+            else:
+                base_query += f" ORDER BY {id_column} ASC"
+            
+            base_query += " LIMIT :limit"
+            params['limit'] = limit
+
+            # Execute query
+            async with self.db.get_session() as session:
+                result = await session.execute(text(base_query), params)
+                return [dict(row) for row in result.mappings()]
+
+        except Exception as e:
+            logger.error(f"Error getting all {entity_type}: {str(e)}")
+            return []
+
 
 

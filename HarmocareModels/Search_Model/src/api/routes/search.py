@@ -65,13 +65,13 @@ class SearchRequest(BaseModel):
 class SearchParams:
     def __init__(
         self,
-        query: str = Query(..., min_length=1, max_length=500),
-        city: Optional[str] = Query(None, description="City filter"),
-        limit: int = Query(10, ge=1, le=100),
+        query: Optional[str] = Query(None),
+        city: Optional[str] = Query(None),
         hospital_type: Optional[str] = Query(None),
-        specialization: Optional[str] = Query(None)
+        specialization: Optional[str] = Query(None),
+        limit: int = Query(10, ge=1, le=100)
     ):
-        self.query = query
+        self.query = query if query else "*"  # Use * for default search
         self.filters = {}
         if city:
             self.filters['city'] = city
@@ -93,22 +93,33 @@ async def perform_search(
         results = {}
         total_results = 0
         
+        # If query is "*", it's a default search
+        is_default_search = query == "*"
+        
         for entity_type in entity_types:
             try:
+                # Create a copy of filters for each entity type
                 current_filters = dict(filters)
                 
-                # Only apply location filters to physical entities
-                if entity_type in ['symptoms', 'diseases']:
-                    current_filters = {}  # No filters for symptoms/diseases
-                elif current_filters.get('city'):
-                    current_filters['location' if entity_type in ['hospitals', 'clinics'] else 'city'] = current_filters.pop('city')
+                # Transform city to location for hospitals/clinics
+                if entity_type in ['hospitals', 'clinics'] and 'city' in current_filters:
+                    current_filters['location'] = current_filters.pop('city')
 
-                entity_results = await search_engine.search_entity(
-                    query=query,
-                    entity_type=entity_type,
-                    filters=current_filters,
-                    limit=limit
-                )
+                if is_default_search:
+                    # For default search, get all records with basic filtering
+                    entity_results = await search_engine.get_all_entities(
+                        entity_type=entity_type,
+                        filters=current_filters,
+                        limit=limit
+                    )
+                else:
+                    # Regular search with query
+                    entity_results = await search_engine.search_entity(
+                        query=query,
+                        entity_type=entity_type,
+                        filters=current_filters,
+                        limit=limit
+                    )
                 
                 results[entity_type] = {
                     "results": entity_results,
@@ -131,8 +142,10 @@ async def perform_search(
             "results": results,
             "metadata": {
                 "total_results": total_results,
-                "query": query,
-                "entity_types": entity_types
+                "query": query if not is_default_search else None,
+                "entity_types": entity_types,
+                "is_default_search": is_default_search,
+                "applied_filters": filters
             }
         }
     except Exception as e:
@@ -144,21 +157,35 @@ async def perform_search(
 @router.post("/search/unified", response_model=Dict)
 async def unified_search(
     request: Optional[SearchRequest] = None,
-    query: str = Query(None, min_length=1, max_length=500),
+    query: Optional[str] = Query(None),
     city: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
     background_tasks: BackgroundTasks = None
 ):
-    """Unified search across all entity types"""
-    if request:  # POST request
+    """Unified search across all entity types. Returns all doctors and hospitals if no query provided."""
+    if request:
         search_params = request
-    else:  # GET request
-        search_params = SearchParams(query=query, city=city, limit=limit)
-        
+    else:
+        # For default search, only include city filter if provided
+        filters = {}
+        if city:
+            filters['city'] = city
+            
+        search_params = SearchParams(
+            query=query,
+            city=city,
+            limit=limit
+        )
+    
+    # For unified search, we should avoid passing specialization and hospital_type filters
+    clean_filters = {}
+    if search_params.filters.get('city'):
+        clean_filters['city'] = search_params.filters['city']
+    
     return await perform_search(
         query=search_params.query,
-        entity_types=['hospitals', 'doctors', 'clinics', 'symptoms', 'diseases'],
-        filters=search_params.filters,
+        entity_types=['doctors', 'hospitals', 'clinics'],
+        filters=clean_filters,  # Use cleaned filters
         limit=search_params.limit,
         background_tasks=background_tasks
     )
@@ -168,16 +195,16 @@ async def unified_search(
 @router.post("/search/doctors", response_model=Dict)
 async def search_doctors(
     request: Optional[SearchRequest] = None,
-    query: str = Query(None, min_length=1, max_length=500),
+    query: Optional[str] = Query(None),
     city: Optional[str] = Query(None),
     specialization: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
     background_tasks: BackgroundTasks = None
 ):
-    """Search doctors and related medical conditions"""
-    if request:  # POST request
+    """Search doctors and related medical conditions. Returns all doctors if no query provided."""
+    if request:
         search_params = request
-    else:  # GET request
+    else:
         search_params = SearchParams(
             query=query,
             city=city,
@@ -187,7 +214,7 @@ async def search_doctors(
     
     return await perform_search(
         query=search_params.query,
-        entity_types=['doctors', 'symptoms', 'diseases'],
+        entity_types=['doctors'],
         filters=search_params.filters,
         limit=search_params.limit,
         background_tasks=background_tasks
@@ -198,16 +225,16 @@ async def search_doctors(
 @router.post("/search/medical-facilities", response_model=Dict)
 async def search_facilities(
     request: Optional[SearchRequest] = None,
-    query: str = Query(None, min_length=1, max_length=500),
+    query: Optional[str] = Query(None),
     city: Optional[str] = Query(None),
     hospital_type: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
     background_tasks: BackgroundTasks = None
 ):
-    """Search hospitals, clinics and related medical conditions"""
-    if request:  # POST request
+    """Search hospitals and clinics. Returns all hospitals and clinics if no query provided."""
+    if request:
         search_params = request
-    else:  # GET request
+    else:
         search_params = SearchParams(
             query=query,
             city=city,
@@ -217,7 +244,7 @@ async def search_facilities(
     
     return await perform_search(
         query=search_params.query,
-        entity_types=['hospitals', 'clinics', 'symptoms', 'diseases'],
+        entity_types=['hospitals', 'clinics'],
         filters=search_params.filters,
         limit=search_params.limit,
         background_tasks=background_tasks
