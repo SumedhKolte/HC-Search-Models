@@ -587,10 +587,29 @@ class SearchEngine:
         try:
             # Get the appropriate ID column for the entity type
             id_column = self.id_mapping.get(entity_type, 'id')
+            
+            # Define specific columns for each entity type
+            if entity_type == 'doctors':
+                columns = """
+                    did, name, specialization, city, rating, 
+                    experience, consultantfee, 
+                    doctor_hours, gender, degree
+                """
+            elif entity_type == 'hospitals':
+                columns = """
+                    hid, name, hospital_type, location, rating,
+                    facilities, specialties, emergency_ready
+                """
+            elif entity_type == 'clinics':
+                columns = """
+                    cid, name, location, specialties
+                """
+            else:
+                raise ValueError(f"Unsupported entity type: {entity_type}")
 
             # Build base query
             base_query = f"""
-                SELECT *
+                SELECT {columns}
                 FROM {entity_type}
                 WHERE TRUE
             """
@@ -613,8 +632,10 @@ class SearchEngine:
                         base_query += " AND LOWER(hospital_type) = LOWER(:type)"
                         params['type'] = filters['hospital_type']
 
-            # Add ordering and limit
+            # Add ordering 
             if entity_type == 'doctors':
+                base_query += " ORDER BY rating DESC NULLS LAST, experience DESC"
+            elif entity_type == 'hospitals':
                 base_query += " ORDER BY rating DESC NULLS LAST"
             else:
                 base_query += f" ORDER BY {id_column} ASC"
