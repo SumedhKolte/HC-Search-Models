@@ -102,7 +102,7 @@ async def search(request: SearchRequest):
         is_valid, error = validator.validate_query(request.query)
         if not is_valid:
             raise HTTPException(status_code=400, detail=error)
-            
+        print(request.query,request.search_type,request.filters,request.location,request.radius_km,request.limit)
         # Execute search
         results = app.state.search_engine.search(
             query=request.query,
