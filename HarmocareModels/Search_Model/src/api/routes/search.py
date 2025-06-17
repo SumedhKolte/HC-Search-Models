@@ -65,11 +65,11 @@ class SearchRequest(BaseModel):
 class SearchParams:
     def __init__(
         self,
-        query: Optional[str] = Query(None),
-        city: Optional[str] = Query(None),
-        hospital_type: Optional[str] = Query(None),
-        specialization: Optional[str] = Query(None),
-        limit: int = Query(10, ge=1, le=100)
+        query: Optional[str] = None,  # Remove Query wrapper
+        city: Optional[str] = None,   # Remove Query wrapper
+        hospital_type: Optional[str] = None,  # Remove Query wrapper
+        specialization: Optional[str] = None,  # Remove Query wrapper
+        limit: int = 10  # Remove Query wrapper, set default directly
     ):
         self.query = query if query else "*"  # Use * for default search
         self.filters = {}
@@ -79,7 +79,7 @@ class SearchParams:
             self.filters['hospital_type'] = hospital_type
         if specialization:
             self.filters['specialization'] = specialization
-        self.limit = limit
+        self.limit = min(max(1, limit), 100)  # Ensure limit is between 1 and 100
 
 async def perform_search(
     query: str,
@@ -157,20 +157,16 @@ async def perform_search(
 @router.post("/search/unified", response_model=Dict)
 async def unified_search(
     request: Optional[SearchRequest] = None,
-    query: Optional[str] = Query(None),
-    city: Optional[str] = Query(None),
-    limit: int = Query(10, ge=1, le=100),
+    query: Optional[str] = Query(None, description="Search query text"),
+    city: Optional[str] = Query(None, description="Filter by city"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
     background_tasks: BackgroundTasks = None
 ):
-    """Unified search across all entity types. Returns all doctors and hospitals if no query provided."""
+    """Unified search across all entity types. Returns all doctors, hospitals and clinics if no query provided."""
     if request:
         search_params = request
     else:
-        # For default search, only include city filter if provided
-        filters = {}
-        if city:
-            filters['city'] = city
-            
+        # Convert Query parameters to regular values
         search_params = SearchParams(
             query=query,
             city=city,
@@ -185,7 +181,7 @@ async def unified_search(
     return await perform_search(
         query=search_params.query,
         entity_types=['doctors', 'hospitals', 'clinics'],
-        filters=clean_filters,  # Use cleaned filters
+        filters=clean_filters,
         limit=search_params.limit,
         background_tasks=background_tasks
     )
@@ -195,16 +191,17 @@ async def unified_search(
 @router.post("/search/doctors", response_model=Dict)
 async def search_doctors(
     request: Optional[SearchRequest] = None,
-    query: Optional[str] = Query(None),
-    city: Optional[str] = Query(None),
-    specialization: Optional[str] = Query(None),
-    limit: int = Query(10, ge=1, le=100),
+    query: Optional[str] = Query(None, description="Search query text"),
+    city: Optional[str] = Query(None, description="Filter by city"),
+    specialization: Optional[str] = Query(None, description="Filter by specialization"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
     background_tasks: BackgroundTasks = None
 ):
     """Search doctors and related medical conditions. Returns all doctors if no query provided."""
     if request:
         search_params = request
     else:
+        # Convert Query parameters to regular values
         search_params = SearchParams(
             query=query,
             city=city,
@@ -225,16 +222,17 @@ async def search_doctors(
 @router.post("/search/medical-facilities", response_model=Dict)
 async def search_facilities(
     request: Optional[SearchRequest] = None,
-    query: Optional[str] = Query(None),
-    city: Optional[str] = Query(None),
-    hospital_type: Optional[str] = Query(None),
-    limit: int = Query(10, ge=1, le=100),
+    query: Optional[str] = Query(None, description="Search query text"),
+    city: Optional[str] = Query(None, description="Filter by city"),
+    hospital_type: Optional[str] = Query(None, description="Filter by hospital type"),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
     background_tasks: BackgroundTasks = None
 ):
     """Search hospitals and clinics. Returns all hospitals and clinics if no query provided."""
     if request:
         search_params = request
     else:
+        # Convert Query parameters to regular values
         search_params = SearchParams(
             query=query,
             city=city,
