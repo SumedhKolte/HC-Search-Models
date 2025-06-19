@@ -15,22 +15,27 @@ RUN apt-get update && apt-get install -y \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only the files needed for inference
-COPY requirements.txt .
-COPY req/base.txt ./req/base.txt
-COPY req/prod.txt ./req/prod.txt
-COPY app.py .
-COPY local_model ./local_model
+# Copy project files
+COPY . .
 
-# Upgrade pip and install dependencies
+# Upgrade pip explicitly using python -m
 RUN python -m pip install --upgrade pip
+
+# Install Python dependencies
 RUN pip install -r req/base.txt
 RUN pip install -r req/prod.txt
+RUN pip install -r req/dev.txt
 RUN pip install -r requirements.txt
-RUN pip install gradio
+RUN pip install faiss-cpu
+RUN pip install "uvicorn[standard]"
 
-# Expose the port Gradio will run on
-EXPOSE 7860
+# Preload the SentenceTransformer model
+RUN python3 -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2').save('/app/local_model')"
 
-# Run the Gradio app
-CMD ["python", "app.py"]
+# Expose the port
+EXPOSE 8000
+
+# Run with uvicorn directly (with --reload for dev)
+CMD ["uvicorn", "src.api.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
