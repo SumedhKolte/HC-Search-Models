@@ -22,9 +22,9 @@ COPY . .
 RUN python -m pip install --upgrade pip
 
 # Install Python dependencies
-RUN pip install -r req/base.txt
-RUN pip install -r req/prod.txt
-RUN pip install -r req/dev.txt
+# RUN pip install -r req/base.txt
+# RUN pip install -r req/prod.txt
+# RUN pip install -r req/dev.txt
 RUN pip install -r requirements.txt
 RUN pip install faiss-cpu
 RUN pip install "uvicorn[standard]"
